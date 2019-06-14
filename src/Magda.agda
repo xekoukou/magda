@@ -23,23 +23,14 @@ open import Prelude.Equality
 open import Prelude.Product
 open import Prelude.Unit
 open import Prelude.Show
+open import Prelude.Bool
 open import Prelude.String
-open import Prelude.Function
 open import Prelude.Semiring
+open import Prelude.Equality
+open import Prelude.Decidable
+open import Prelude.Function
+import Prelude.Maybe as M
 
-
--- 
--- record CoMonad (F : Set → Set) : Set₁ where
---   field
---     extract : ∀{A} → F A → A
---     duplicate : ∀{A} → F A → F (F A)
---     _$_ : ∀{A B} → (F A → B) → F A → F B
---     
--- open CoMonad {{...}}
-
--- inc : ∀{Ty : Set} → {Ctx : Ty → Set} → {{_ : {ty : Ty} → Eq (Ctx ty)}} → ∀{ty} → Ctx ty → (∀ {ty} → Ctx ty → Nat) → (∀ {ty} → Ctx ty → Nat)
--- inc ctx S x with x == ctx
--- ... | r = {!!}
 
 record Stream (A : Set) : Set where
   coinductive
@@ -47,111 +38,176 @@ record Stream (A : Set) : Set where
     head : A
     tail : Stream A
 
-open Stream
-
-S : Set
-S = Stream (Stream Nat)
-
-emptyS : S
-head (head emptyS) = 0
-tail (head emptyS) = head emptyS
-tail emptyS = emptyS
-
-record EnumSet {Ty : Set} (Ctx : Ty → Set) : Set where
+open Stream public
+  
+record ComSuc {Ty : Set} {Ctx : Ty → Set} : Set where
   field
-    enum :  ∀{ty} → Ctx ty → Nat
+    cS : ∀(ty : Ty) → (ctx : Ctx ty) → Stream Bool
+  
+open ComSuc {{...}} public
 
-open EnumSet {{...}}
+private
+  ComState : ∀{Ty : Set} → ∀{Ctx : Ty → Set} → Set
+  ComState {Ty} {Ctx} = (ty : Ty) → (ctx : Ctx ty) → Nat
+
+  inc : ∀{Ty : Set} → ∀{Ctx : Ty → Set} → ComState {Ty} {Ctx} → {ty : Ty} → (ctx : Ctx ty)
+        → {{eqty : Eq Ty}} → {{eqctx : {ty : Ty} → Eq (Ctx ty)}} → ComState {Ty} {Ctx}
+  inc {_} {_} prv {ty1} ctx1 ty2 ctx2
+    = case (ty1 , ctx1) == (ty2 , ctx2) of
+       λ { (yes _) → suc (prv ty2 ctx2)
+          ; (no _) → prv ty2 ctx2}
+  
+  _isSuc_ : ∀{Ty : Set} → ∀{Ctx : Ty → Set} → ∀{ty} → Ctx ty → ComState {Ty} {Ctx}
+            → {{comSuc : ComSuc {Ty} {Ctx}}} → Bool
+  _isSuc_ {_} {_} {ty} ctx s {{cmS}} = h1 (s ty ctx) (cS ty ctx) where
+    h1 : Nat → Stream Bool → Bool
+    h1 zero str = head str
+    h1 (suc x) str = h1 x (tail str)
+
+SF : {Ty : Set} (Ctx : Ty → Set) (ty : Ty) (ctx : Ctx ty) (F : (ty : Ty) → Ctx ty → Set → Set) (A : Set) → Set
+SF {Ty} Ctx ty ctx F A = ComState {Ty} {Ctx} → F ty ctx A × ComState {Ty} {Ctx}
+
 
 -- The pure function is executed under the same context as
--- its input.                                                       initial ending s
-record Functor {Ty : Set} {Ctx : Ty → Set} {{_ : EnumSet Ctx}} (F : S → S → (ty : Ty) → Ctx ty → Set → Set) : Set₁ where
+-- its input.
+record Functor {Ty : Set} {Ctx : Ty → Set} (F : (ty : Ty) → Ctx ty → Set → Set) : Set₁ where
   field
-    _<$>_ : ∀{s1 s2 ty ctx A B} → (A → B) → F s1 s2 ty ctx A → F s1 s2 ty ctx B
+    _<$>_ : ∀{ty ctx A B} → (A → B) → SF Ctx ty ctx F A → SF Ctx ty ctx F B
 
-open Functor {{...}}
+open Functor {{...}} public
 
-record Applicative {Ty : Set} {Ctx : Ty → Set} {{_ : EnumSet Ctx}} (F : S → S → (ty : Ty) → Ctx ty → Set → Set) : Set₁ where
+
+record Applicative {Ty : Set} {Ctx : Ty → Set} (F : (ty : Ty) → Ctx ty → Set → Set) : Set₁ where
   field
-    pure  : ∀{s ty ctx A} → A → F s s ty ctx A
-    _<*>_ : ∀{s1e s2s s2e ty1 ty2 ctx1 ctx2 A B} → F s2e s1e ty1 ctx1 (A → B) → F s2s s2e ty2 ctx2 A → F s2s s1e ty1 ctx1 B
+    pure  : ∀{ty A} → ∀ ctx → A → (ComState {Ty} {Ctx} → F ty ctx A × ComState {Ty} {Ctx})
+    _<*>_ : ∀{ty1 ty2 ctx1 ctx2 A B}
+            → {{comSuc : ComSuc {Ty} {Ctx} }} → {{eqty : Eq Ty}} → {{eqctx : {ty : Ty} → Eq (Ctx ty)}}
+            → SF Ctx ty1 ctx1 F (A → B) → SF Ctx ty2 ctx2 F A → SF Ctx ty1 ctx1 F B
     overlap {{super}} : Functor F
 
-open Applicative {{...}}
+open Applicative {{...}} public
 
-record Monad {Ty : Set} {Ctx : Ty → Set} {{_ : EnumSet Ctx}} (F : S → S → (ty : Ty) → Ctx ty → Set → Set) : Set₁ where
+record Monad {Ty : Set} {Ctx : Ty → Set} (F : (ty : Ty) → Ctx ty → Set → Set) : Set₁ where
   coinductive
   field
-    _>>=_ : ∀{s1e s2s s2e ty1 ty2 ctx1 ctx2 A B} → F s2s s2e ty2 ctx2 A → (A → F s2e s1e ty1 ctx1 B) → F s2s s1e ty1 ctx1 B
+    _>>=_ : ∀{ty1 ty2 ctx1 ctx2 A B}
+            → {{comSuc : ComSuc {Ty} {Ctx} }} → {{eqty : Eq Ty}} → {{eqctx : {ty : Ty} → Eq (Ctx ty)}}
+            → SF Ctx ty2 ctx2 F A → (A →  SF Ctx ty1 ctx1 F B) → SF Ctx ty1 ctx1 F B
     overlap {{super}} : Applicative F
 
-  _<<=_ : ∀{s1e s2s s2e ty1 ty2 ctx1 ctx2 A B} → (A → F s2e s1e ty1 ctx1 B) → F s2s s2e ty2 ctx2 A → F s2s s1e ty1 ctx1 B
-  f <<= x = x >>= f
+  _<<=_ : ∀{ty1 ty2 ctx1 ctx2 A B}
+          → {{comSuc : ComSuc {Ty} {Ctx} }} → {{eqty : Eq Ty}} → {{eqctx : {ty : Ty} → Eq (Ctx ty)}}
+          → (A →  SF Ctx ty1 ctx1 F B) → SF Ctx ty2 ctx2 F A → SF Ctx ty1 ctx1 F B
+  _<<=_ {ty1} {_} {ctx1} f x = _>>=_ x f
 
-open Monad {{...}}
+open Monad {{...}} public
+  
+  
+private
 
+  data Maybe {Ty : Set} (Ctx : Ty → Set) (ty : Ty) (ctx : Ctx ty) (A : Set) : Set where
+    just    : A → Maybe Ctx ty ctx A
+    nothing : Maybe Ctx ty ctx A
 
-data Maybe {Ty : Set} (Ctx : Ty → Set) {{_ : EnumSet Ctx}} (s1 s2 : S) (ty : Ty) (ctx : Ctx ty) (A : Set) : Set where
-  just    : A → Maybe Ctx s1 s2 ty ctx A
-  nothing : Maybe Ctx s1 s2 ty ctx A
-
+SMaybe : {Ty : Set} (Ctx : Ty → Set) (ty : Ty) (ctx : Ctx ty) (A : Set) → Set
+SMaybe {Ty} Ctx ty ctx A = {{comSuc : ComSuc {Ty} {Ctx} }} → SF Ctx ty ctx (Maybe Ctx) A
 
 instance
-  functorMaybe : ∀{Ty Ctx} → {{_ : EnumSet Ctx}} → Functor {Ty} (Maybe Ctx)
-  _<$>_ {{functorMaybe}} f (just x) = just (f x)
-  _<$>_ {{functorMaybe}} f nothing = nothing
+  functorMaybe : ∀{Ty Ctx} → Functor {Ty} (Maybe Ctx)
+  _<$>_ {{functorMaybe}} {ty} {ctx} f x s = first h1 (x s) where
+    h1 : Maybe _ _ _ _ → Maybe _ _ _ _ 
+    h1 (just x) = just (f x)
+    h1 nothing = nothing
 
-  applMaybe : ∀{Ty Ctx} → {{_ : EnumSet Ctx}} → Applicative {Ty} (Maybe Ctx)
-  pure ⦃ applMaybe ⦄ x = just x
-  _<*>_ ⦃ applMaybe ⦄ (just f) (just x) = just (f x)
-  _<*>_ ⦃ applMaybe ⦄ (just f) nothing = nothing
-  _<*>_ ⦃ applMaybe ⦄ nothing x = nothing
+
+  applMaybe : ∀{Ty Ctx} → Applicative {Ty} (Maybe Ctx)
+  pure ⦃ applMaybe ⦄ ctx x s = just x , s
+  _<*>_ ⦃ applMaybe ⦄ {ty1} {ty2} {ctx1} {ctx2} f x s
+    = h2 where
+    xs = x s
+    h1 : Maybe _ _ _ _ → Maybe _ _ _ _  → Maybe _ _ _ _
+    h1 (just f) (just x) = just (f x)
+    h1 (just f) nothing = nothing
+    h1 nothing x = nothing
+    h2 = case ((ty1 , ctx1) == (ty2 , ctx2)) of
+          λ { (yes _) → let mf , s2 = f (snd xs)
+                        in h1 mf (fst xs) , s2
+            ; (no _)  → case (ctx2 isSuc (snd xs)) of
+                         λ { true → let mf , s2 = f (inc (snd xs) ctx2)
+                                     in h1 mf (fst xs) , s2
+                           ; false  → let mf , s2 = f (inc (snd xs) ctx2)
+                                      in nothing , s2} }
+    
   super {{applMaybe}} = functorMaybe
 
-  monadMaybe : ∀{Ty Ctx} → {{_ : EnumSet Ctx}} → Monad {Ty} (Maybe Ctx)
-  _>>=_ ⦃ monadMaybe ⦄ (just x) f = case f x of
-                           λ { (just x) → just x
-                             ; nothing  → nothing}
-  _>>=_ ⦃ monadMaybe ⦄ nothing f = nothing
+
+  monadMaybe : ∀{Ty Ctx} → Monad {Ty} (Maybe Ctx)
+  _>>=_ ⦃ monadMaybe {Ty} {Ctx} ⦄ {ty1} {ty2} {ctx1} {ctx2} x f s = h3 where
+    xs = x s
+    h1 : Maybe Ctx ty2 ctx2 _ × ComState {Ty} {Ctx} → (_ → (ComState {Ty} {Ctx} → Maybe Ctx ty1 ctx1 _ × ComState {Ty} {Ctx})) → Maybe Ctx ty1 ctx1 _ × ComState {Ty} {Ctx}
+    h1 (just x , s1) f = f x s1
+    h1 (nothing , s1) f = nothing , s1 
+    h2 : Bool → Maybe Ctx ty2 ctx2 _ × ComState {Ty} {Ctx} → (_ → (ComState {Ty} {Ctx} → Maybe Ctx ty1 ctx1 _ × ComState {Ty} {Ctx})) → Maybe Ctx ty1 ctx1 _ × ComState {Ty} {Ctx}
+    h2 true (just x , s1) f = f x (inc s1 ctx2)
+    h2 false (just x , s1) f = nothing , inc s1 ctx2
+    h2 b (nothing , s1) f = nothing , inc s1 ctx2 
+    h3 = case ((ty1 , ctx1) == (ty2 , ctx2)) of
+          λ { (yes _) → h1 xs f
+            ; (no _)  → h2 (ctx2 isSuc (snd xs)) xs f }
+     
   super {{monadMaybe}} = applMaybe
 
 
+-- Using this in computation is insecure. Just don't. Only use it with proofs about the computation.
+_toM : ∀{Ty Ctx} → ∀{ty ctx A} → Maybe {Ty} Ctx ty ctx A → M.Maybe A
+_toM (just x) = M.just x
+_toM nothing = M.nothing
 
--- postulate
---   ⟵_ : ∀{Ty ty Ctx A} → ∀ ctx → Maybe {Ty} Ctx ty ctx A
---   ⟵_<_> : ∀{Ty ty Ctx} → ∀ ctx → (A : Set) → Maybe {Ty} Ctx ty ctx A
---   <_>_⟶_ : ∀{Ty ty Ctx} → (A : Set) → A → ∀ ctx → Maybe {Ty} Ctx ty ctx Unit
---   _⟶_ : ∀{Ty ty Ctx} → {A : Set} → A → ∀ ctx → Maybe {Ty} Ctx ty ctx Unit
-
--- infix 30 ⟵_ 
--- infix 30 <_>_⟶_ 
--- infix 30 _⟶_ 
-
--- data TyCtx : Set where
---   Engineer : TyCtx
---   Cook : TyCtx
---   Boss : TyCtx
-  
-
--- data Ctx : TyCtx → Set where
---   Bob : Ctx Engineer
---   Tonia : Ctx Cook
---   Alice : Ctx Cook
---   Alex : Ctx Boss
+_>>=M_ : ∀{Ty Ctx} → ∀{ty1 ty2 ctx1 ctx2 A B}
+         → {{comSuc : ComSuc {Ty} {Ctx} }} → {{eqty : Eq Ty}} → {{eqctx : {ty : Ty} → Eq (Ctx ty)}}
+         → SF Ctx ty2 ctx2 (Maybe Ctx) A → (M.Maybe A →  SF Ctx ty1 ctx1 (Maybe Ctx) B)
+         → SF Ctx ty1 ctx1 (Maybe Ctx) B
+_>>=M_ {Ty} {Ctx} {ty1} {ty2} {ctx1} {ctx2} {A} {B} x f s = h3 where
+  xs = x s
+  h1 : Maybe Ctx ty2 ctx2 _ × ComState {Ty} {Ctx} → (_ → (ComState {Ty} {Ctx} → Maybe Ctx ty1 ctx1 _ × ComState {Ty} {Ctx})) → Maybe Ctx ty1 ctx1 _ × ComState {Ty} {Ctx}
+  h1 (x , s1) f = f (x toM) s1
+  h2 : Bool → Maybe Ctx ty2 ctx2 _ × ComState {Ty} {Ctx} → (_ → (ComState {Ty} {Ctx} → Maybe Ctx ty1 ctx1 _ × ComState {Ty} {Ctx})) → Maybe Ctx ty1 ctx1 _ × ComState {Ty} {Ctx}
+  h2 true (just x , s1) f = f (M.just x) (inc s1 ctx2)
+  h2 false (just x , s1) f = f M.nothing (inc s1 ctx2)
+  h2 b (nothing , s1) f = f M.nothing (inc s1 ctx2)
+  h3 = case ((ty1 , ctx1) == (ty2 , ctx2)) of
+        λ { (yes _) → h1 xs f
+          ; (no _)  → h2 (ctx2 isSuc (snd xs)) xs f }
 
 
--- fun : Maybe Ctx Cook Alice Unit
--- fun = (< String > "Pick a number :" ⟶ Bob) >>=
---       λ _ → (((λ z → "Bob chose this number :"  & (show z)) <$> ⟵ Bob < Nat >) >>= _⟶ Alice) >>=
---       λ _ → < String > "Thank you" ⟶ Bob >>= λ _ → pure unit
+init : ∀{Ty : Set} → ∀{Ctx : Ty → Set} → ComState {Ty} {Ctx}
+init ty ctx = zero
 
 
--- tun : {ty : TyCtx} → ∀ ctx → Maybe Ctx ty ctx Unit
--- tun ctx = < String > "What kind of food do you want, boss?" ⟶ Alex >>=
---           {!!}
+bun : {Ty : Set} {Ctx : Ty → Set} {ty : Ty} {ctx : Ctx ty} {A : Set}
+      → Stream (SMaybe {Ty} Ctx ty ctx A) → {{comSuc : ComSuc {Ty} {Ctx} }}
+      → ComState {Ty} {Ctx} → Stream (M.Maybe A)
+head (bun str s) = (fst (head str s)) toM
+tail (bun str s) = bun (tail str) (snd (head str s))
 
--- gun : Maybe Ctx Boss Alex Unit
--- gun = < String > "Alex, who should cook? Tonia or Alice?" ⟶ Alex >>=
---       λ _ → (λ { "Alice" → tun Alice >>= λ _ → pure unit
---                ; "Tonia" → tun Tonia >>= λ _ → pure unit
---                ; _       → nothing }) <<= ⟵ Alex
+sun : {Ty : Set} {Ctx : Ty → Set} {ty : Ty} {ctx : Ctx ty} {A : Set}
+      → {{eqty : Eq Ty}} → {{eqctx : {ty : Ty} → Eq (Ctx ty)}}
+      → Stream (SMaybe {Ty} Ctx ty ctx A)
+      → {{comSuc : ComSuc {Ty} {Ctx} }} → ComState {Ty} {Ctx} → Maybe {Ty} Ctx ty ctx (Stream (M.Maybe A))
+sun x s = just (bun x s)
+
+-- Unknown here represents the environment, unknown data dependencies between the environment.
+postulate
+  Unknown : Set
+  unknown : Unknown
+
+-- This has the same value each time they are called. Only the first time is there any IO happenning.
+postulate
+  ⟵_     : ∀{Ty} → {ty : Ty} → ∀{Ctx} → {A : Set} → ∀ ctx → Unknown → Maybe Ctx ty ctx A
+  ⟵_<_>  : ∀{Ty} → {ty : Ty} → ∀{Ctx} → ∀ ctx → (A : Set) → Unknown → Maybe Ctx ty ctx A
+  <_>_⟶_ : ∀{Ty} → {ty : Ty} → ∀{Ctx} → (A : Set) → A → ∀ ctx → Maybe Ctx ty ctx Unknown
+  _⟶_    : ∀{Ty} → {ty : Ty} → ∀{Ctx} → {A : Set} → A → ∀ ctx → Maybe Ctx ty ctx Unknown
+
+infix 30 ⟵_ 
+infix 30 <_>_⟶_ 
+infix 30 _⟶_ 
