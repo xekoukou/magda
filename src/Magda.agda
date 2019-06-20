@@ -184,18 +184,6 @@ init : ∀{Ty : Set} → ∀{Ctx : Ty → Set} → ComState {Ty} {Ctx}
 init ty ctx = zero
 
 
-bun : {Ty : Set} {Ctx : Ty → Set} {ty : Ty} {ctx : Ctx ty} {A : Set}
-      → Stream (SMaybe {Ty} Ctx ty ctx A) → {{comSuc : ComSuc {Ty} {Ctx} }}
-      → ComState {Ty} {Ctx} → Stream (M.Maybe A)
-head (bun str s) = (fst (head str s)) toM
-tail (bun str s) = bun (tail str) (snd (head str s))
-
-sun : {Ty : Set} {Ctx : Ty → Set} {ty : Ty} {ctx : Ctx ty} {A : Set}
-      → {{eqty : Eq Ty}} → {{eqctx : {ty : Ty} → Eq (Ctx ty)}}
-      → Stream (SMaybe {Ty} Ctx ty ctx A)
-      → {{comSuc : ComSuc {Ty} {Ctx} }} → ComState {Ty} {Ctx} → Maybe {Ty} Ctx ty ctx (Stream (M.Maybe A))
-sun x s = just (bun x s)
-
 -- Unknown here represents the environment, unknown data dependencies between the environment.
 postulate
   Unknown : Set
