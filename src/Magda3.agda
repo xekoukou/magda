@@ -20,7 +20,8 @@ open import Agda.Primitive
 
 
 -- The container should not be inserted into any data type or record. IMPORTANT
-
+-- Data that are already into a container can be passed freely between containers.
+-- Only when they are to be extracted, we need to take care to use the proper function.
 
 private
   record Q {Ty : Set} {Ctx : Ty → Set} (ty : Ty) (ctx : Ctx ty) (A : Set) : Set where
@@ -29,32 +30,34 @@ private
 
   open Q
 
+V : {Ty : Set} {Ctx : Ty → Set} (ty : Ty) (ctx : Ctx ty) (A : Set) → Set
+V {Ty} {Ctx} ty ctx A = Q {Ty} {Ctx} ty ctx A
+
+
 record WE (Q : {Ty : Set} {Ctx : Ty → Set} (ty : Ty) (ctx : Ctx ty) (A : Set) → Set) : Set₁ where
   field
     _⟨*⟩_ : {Ty : Set} {Ctx : Ty → Set}
             → ∀{ty1 ty2 ctx1 ctx2 A B}
             → Q {Ty} {Ctx} ty1 ctx1 (A → B) → Q {Ty} {Ctx} ty2 ctx2 A → Q {Ty} {Ctx} ty1 ctx1 B
     lift : ∀{Ty Ctx} → ∀{ty A} → ∀ ctx → A → Q {Ty} {Ctx} ty ctx A
-    switch : {Ty1 : Set} {Ctx1 : Ty1 → Set} (Ty2 : Set) (Ctx2 : Ty2 → Set)
-              → ∀{ty1 ty2 ctx1 ctx2 A} → Q {Ty1} {Ctx1} ty1 ctx1 A → Q {Ty2} {Ctx2} ty2 ctx2 A
-    squash : {Ty1 : Set} {Ctx1 : Ty1 → Set} {Ty2 : Set} {Ctx2 : Ty2 → Set}
-              → ∀{ty1 ty2 ctx1 ctx2 A} → Q {Ty1} {Ctx1} ty1 ctx1 (Q {Ty2} {Ctx2} ty2 ctx2 A) → Q {Ty2} {Ctx2} ty2 ctx2 A
+    -- I do not like switch, are there other options?
+--    switch : {Ty1 : Set} {Ctx1 : Ty1 → Set} (Ty2 : Set) (Ctx2 : Ty2 → Set)
+--              → ∀{ty1 ty2 ctx1 ctx2 A} → Q {Ty1} {Ctx1} ty1 ctx1 A → Q {Ty2} {Ctx2} ty2 ctx2 A
 
 
-
-open WE {{...}}
+open WE {{...}} public
 
 instance
   weQ : WE Q
   value (_⟨*⟩_ {{weQ}} f x) = value f (value x)
   value (lift {{weQ}} ctx a) = a
-  value (switch ⦃ weQ ⦄ Ty2 Ctx2 x) = value x
-  squash ⦃ weQ ⦄ x = value x
+--  value (switch ⦃ weQ ⦄ Ty2 Ctx2 x) = value x
 
 
 
 private
--- This is used to split parallel results , especially when A and B live are in different contexts.
+-- This is used to split parallel results , especially when A and B live in different contexts.
+-- Probably not useful
   record _×ₚ_ {a b} (A : Set a) (B : Set b) : Set (a ⊔ b) where
     field
       fst : A
@@ -119,10 +122,10 @@ private
 
 record WEW (Q : {Ty : Set} {Ctx : Ty → Set} (ty : Ty) (ctx : Ctx ty) (A : Set) → Set) : Set₁ where
   field
-    _⟨*w⟩_ : {Ty : Set} {Ctx : Ty → Set}
-            → ∀{ty1 ty2 ctx1 ctx2 A B}
+    _⟨*w_⟩_ : {Ty : Set} {Ctx : Ty → Set}
+            → ∀{ty1 ty2 ty3 ctx1 ctx2 A B}
             → {{comSuc : ComSuc {Ty} {Ctx} }} → {{eqty : Eq Ty}} → {{eqctx : {ty : Ty} → Eq (Ctx ty)}}
-            → Q {Ty} {Ctx} ty1 ctx1 (A → B) → Q {Ty} {Ctx} ty2 ctx2 A → Q {Ty} {Ctx} ty1 ctx1 B
+            → Q {Ty} {Ctx} ty1 ctx1 (A → B) → (ctx3 : Ctx ty3) → Q {Ty} {Ctx} ty2 ctx2 A → Q {Ty} {Ctx} ty3 ctx3 (Q {Ty} {Ctx} ty1 ctx1 B)
     liftw : ∀{Ty Ctx} → ∀{ty A} → ∀ ctx → A → Q {Ty} {Ctx} ty ctx A
 
 open WEW {{...}}
@@ -134,32 +137,37 @@ WQ {Ty} {Ctx} ty ctx A
   = Q {WTy} {World} wTy world (ComState {Ty} {Ctx}) → Q {Ty} {Ctx} ty ctx (Maybe A) × Q {WTy} {World} wTy world (ComState {Ty} {Ctx})
 
 
-instance
-  weWQ : WEW WQ
-  liftw ⦃ weWQ ⦄ ctx x s = lift ctx (just x) , s
-  _⟨*w⟩_ ⦃ weWQ ⦄ {_} {_} {ty1} {ty2} {ctx1} {ctx2} f x s = h2 where
-    xs = x s
-    h1 : Maybe _ → Maybe _ → Maybe _
-    h1 (just f) (just x) = just (f x)
-    h1 (just f) nothing = nothing
-    h1 nothing x = nothing
--- The equality is computable by the owner of ctx1 , ctx2
--- or at compile time if there is no context.
-    h2 = case ((ty1 , ctx1) == (ty2 , ctx2)) of
-           λ { (yes refl) → let mf , s2 = f (snd xs)
-          -- Only ctx1 performs any computation.
-                            in ((lift ctx1 h1 ⟨*⟩ mf) ⟨*⟩ (fst xs)) , s2
-  -- world does not have any reference to ctx1, thus we need to provide this to it.
-  -- This is wrong : Fix this.
-             ; (no x) → let noth = lift world (lift ctx1 nothing)
-                                        ----- -> needs to be the exterior context
-                            q = ((lift world λ s1 noth → case (ctx2 isSuc s1) of
-             -- You know your own context. world is permitted to be used without being passed.
-                                                    λ { true → let mf , s2 = f (lift world (inc s1 ctx2))
-                                                               in mf ∥ s2
-                                                      ; false → let mf , s2 = f (lift world (inc s1 ctx2))
-             -- The message is lost here, but we set the function to nothing.
-             -- The end result is the same, but it is confussing.
-                                                                in noth ∥ s2}) ⟨*⟩ (snd xs)) ⟨*⟩ noth
-                            mf , s2 = split world q
-                         in ((lift ctx1 h1 ⟨*⟩ (squash mf)) ⟨*⟩ (fst xs)) , squash s2}
+-- instance
+--   weWQ : WEW WQ
+--   liftw ⦃ weWQ ⦄ ctx x s = lift ctx (just x) , s
+--   _⟨*w_⟩_ ⦃ weWQ ⦄ {_} {_} {ty1} {ty2} {_} {ctx1} {ctx2} f ctx3 x s = h2 where
+--     xs = x s
+--     h1 : Maybe _ → Maybe _ → Maybe _
+--     h1 (just f) (just x) = just (f x)
+--     h1 (just f) nothing = nothing
+--     h1 nothing x = nothing
+-- -- The equality is computable by the owner of ctx1 , ctx2
+-- -- or at compile time if there is no context.
+--     h2 = case ((ty1 , ctx1) == (ty2 , ctx2)) of
+--            λ { (yes refl) → let mf , s2 = f (snd xs)
+--           -- Only ctx1 performs any computation.
+--           -- h1 does not capture any local variables.
+--                             in ((lift ctx1 h1 ⟨*⟩ mf) ⟨*⟩ (fst xs)) , s2
+--              ; (no x) → let q = (((lift world λ inp s1 wctx2 →  case (wctx2 isSuc s1) of
+--  --             -- You know your own context. world is permitted to be used without being passed
+--                                                           λ { true → {!!}
+--                                                             ; false → {!!}}) ⟨*⟩ (switch WTy World (fst xs))) ⟨*⟩ (snd xs)) ⟨*⟩  {!lift ctx3 ctx2!}
+--                         in {!!}}
+
+--  -- let noth = lift world (lift ctx1 nothing)
+--  --                                        ----- -> needs to be the exterior context
+--  --                            q = ((lift world λ s1 noth → case (ctx2 isSuc s1) of
+--  --             -- You know your own context. world is permitted to be used without being passed.
+--  --                                                    λ { true → let mf , s2 = f (lift world (inc s1 ctx2))
+--  --                                                               in mf ∥ s2
+--  --                                                      ; false → let mf , s2 = f (lift world (inc s1 ctx2))
+--  --             -- The message is lost here, but we set the function to nothing.
+--  --             -- The end result is the same, but it is confussing.
+--  --                                                                in noth ∥ s2}) ⟨*⟩ (snd xs)) ⟨*⟩ noth
+--  --                            mf , s2 = split world q
+--  --                         in ((lift ctx1 h1 ⟨*⟩ (squash mf)) ⟨*⟩ (fst xs)) , squash s2
