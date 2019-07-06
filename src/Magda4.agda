@@ -317,11 +317,16 @@ aa (wwe x) s = x , x
 cc : Nat → Nat
 cc k = (λ z → z) k
 
+qw : Nat → Nat → Nat
+qw zero y  = y
+qw (suc x) = λ y → x
+
+
 macro
   xx : Term → TC ⊤
   xx hole = do
     un ← quoteTC {_} {Unit} unit
-    d ← getDefinition (quote cc)
+    d ← getDefinition (quote qw)
     typeError {_} {Unit} ((strErr (showDef d)) ∷ [])
     unify un hole
 
@@ -338,5 +343,5 @@ macro
 --   h y = y
 
 g : Unit
-g = {!!} -- xx
+g = xx
 
