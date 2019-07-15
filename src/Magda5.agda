@@ -254,7 +254,25 @@ redEqs ls = h2 (re ls []) where
 
 
 
--- unify : List SVar → 
+sM : Nat → List (List Nat × Either Nat Term) → Either Nat Term
+sM x [] = left x
+sM x (l ∷ ls) with elem x (fst l)
+... | true  = snd l
+... | false = sM x ls
+
+
+unifyC : List SVar → List (List Nat × Either Nat Term) → List SVar
+unifyC [] ls = []
+unifyC (x@(svar ¬used vlambda vdat) ∷ xs) ls = x ∷ unifyC xs ls
+unifyC (svar used ¬lambda (metaId x) ∷ xs) ls
+ = case (sM x ls) of
+    λ { (left nx) → svar used ¬lambda (metaId nx) ∷ unifyC xs ls
+      ; (right nt) → svar used ¬lambda (trm nt) ∷ unifyC xs ls}
+unifyC (x@(svar used ¬lambda (trm _)) ∷ xs) ls = x ∷ unifyC xs ls
+unifyC (svar used lambda (y , ys) ∷ xs) ls
+  = let ss = unifyC ys ls
+        zs = unifyC xs ls
+    in svar used lambda (y , ss) ∷ zs
 
 
 -- First arg is the term to be type checked.
@@ -289,35 +307,31 @@ gg nm fs
       h1 zero = []
       h1 (suc x) = record { vused = ¬used ; vlambda = unknown ; vdat = unit } ∷ h1 x
 
-      h2 : List SVar → List SVar → Maybe ((List SVar) × List (Nat × Either Nat Term))
-      h2 [] [] = just $ [] , []
+      h2 : List SVar → List SVar → Maybe (List (Nat × Either Nat Term))
+      h2 [] [] = just []
       h2 [] (_ ∷ _) = nothing
       h2 (x ∷ xs) [] = nothing
-      h2 ((svar ¬used vlambda vdat) ∷ xs) (y ∷ ys) = h2 xs ys >>= λ zs → just $ (y ∷ (fst zs)) , snd zs 
-      h2 (x@(svar used _ _) ∷ xs) ((svar ¬used _ _) ∷ ys) = h2 xs ys >>= λ zs → just $ x ∷ fst zs , snd zs
+      h2 ((svar ¬used vlambda vdat) ∷ xs) (y ∷ ys) = h2 xs ys
+      h2 (x@(svar used _ _) ∷ xs) ((svar ¬used _ _) ∷ ys) = h2 xs ys
       h2 (svar used ¬lambda tx ∷ xs) (svar used ¬lambda ty ∷ ys) with eqMet tx ty
       ... | (just meq) =  h2 xs ys >>=
-              λ zs → let bb = svar used ¬lambda tx ∷ (fst zs) -- here we forget ty
-                         qq = snd zs                          -- but we keep the equation meq to perform the
-                     in case meq of                           -- remaining unifications.
-                         λ { nothing → just $ bb , qq
-                           ; (just meq) → just $ bb , meq ∷ qq}
+              λ zs → case meq of                  
+                         λ { nothing → just zs
+                           ; (just meq) → just $ meq ∷ zs}
       ... | nothing = nothing
       h2 (svar used ¬lambda _ ∷ xs) (svar used lambda _ ∷ ys) = nothing
       h2 (svar used lambda _ ∷ xs) (svar used ¬lambda _ ∷ ys) = nothing
       h2 (svar used lambda (tx , lx) ∷ xs) (svar used lambda (ty , ly) ∷ ys) with eqMet tx ty
       ... | nothing = nothing
       ... | just meq = h2 lx ly >>= λ ss → h2 xs ys >>=
-              λ zs → let bb = svar used lambda (tx , fst ss) ∷ (fst zs)  -- similar to the above comments.
-                         qq = snd ss ++ snd zs
-                     in case meq of
-                         λ { nothing → just $ bb , qq
-                           ; (just meq) → just $ bb , meq ∷ qq}
+              λ zs → case meq of
+                         λ { nothing → just (ss ++ zs)
+                           ; (just meq) → just $ meq ∷ (ss ++ zs)}
 
       h3 : List SVar → List SVar → Maybe (List SVar)
-      h3 a b = {!!} where
+      h3 a b = h32 where
         h31 = h2 a b
-        h32 = h31 >>= λ q → redEqs (snd q) >>= λ {x → {!!}}
+        h32 = h31 >>= λ q → redEqs q >>= λ {x → {!!}}
         
 
 --       h2 (record { vused = used ; vlambda = lambda ; vdat = vdatx } ∷ xs) (record { vused = used ; vlambda = ¬lambda ; vdat = vdaty } ∷ ys) = nothing -- Internal error , not typeError. ??
